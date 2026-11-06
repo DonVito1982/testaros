@@ -1,12 +1,14 @@
 #include <stdarg.h>
+#include <stdbool.h>
 #include <stdio.h>
+#include <string.h>
 
 #include "testaros.h"
 #include "testaros_portability.h"
 
-int ran_tests = 0;
-int failed_tests = 0;
-int skipped_tests = 0;
+#define YELLOW(text) "\033[1;33m" text "\033[0m"
+#define GREEN(text) "\033[1;32m" text "\033[0m"
+#define RED(text) "\033[1;31m" text "\033[0m"
 
 static TR_THREAD_LOCAL TrRunner* tr_current;
 static TrReport tr_report = {0, 0, 0, 0};
@@ -32,28 +34,14 @@ void tr_fail_at(const char* file, int line, const char* fmt, ...) {
 
 int tr_report_status(const TrReport* report) { return (report->failed > 0); }
 
-void tr_report_print(const TrReport* report, const char* label) {
-    printf("Resultados de %s -  ", label);
-    printf("Total: %d, ", report->total);
-    printf(GREEN("Pasadas") ": %d", report->passed);
+void tr_report_print(const TrReport* report) {
+    printf("Total: %u, ", report->total);
+    printf(GREEN("Pasadas") ": %u", report->passed);
     if (report->failed != 0) {
-        printf(", " RED("Falladas") ": %d", report->failed);
+        printf(", " RED("Falladas") ": %u", report->failed);
     }
     if (report->skipped != 0) {
-        printf(", " YELLOW("Saltadas") ": %d.", report->skipped);
-    }
-    printf("\n\n");
-}
-
-void report(const char* filename) {
-    printf("Resultados de %s -  ", filename);
-    printf("Total: %d, ", ran_tests);
-    printf(GREEN("Pasadas") ": %d", ran_tests - failed_tests - skipped_tests);
-    if (failed_tests != 0) {
-        printf(", " RED("Falladas") ": %d", failed_tests);
-    }
-    if (skipped_tests != 0) {
-        printf(", " YELLOW("Saltadas") ": %d.", skipped_tests);
+        printf(", " YELLOW("Saltadas") ": %u.", report->skipped);
     }
     printf("\n\n");
 }
@@ -79,38 +67,130 @@ void tr_count_result(TrReport* report, TrResult result) {
     }
 }
 
-TrResult tr_run_test(TrRunner* runner, TrResult (*test)(void),
-                     void (*setup)(void), void (*teardown)(void),
-                     const char* name) {
-    TrResult result;
+typedef struct {
+    char expression[48];
+    bool active;
+} TrFilter;
 
-    tr_current = runner;
-    runner->current_test = name;
+static void tr_run_test(TrRunner* runner, const TrTest* test, char* prefix,
+                 const TrFilter* filter) {
+    char compound_prefix[200];
+    strcpy(compound_prefix, prefix);
+    strcat(compound_prefix, test->name);
+    if (!filter->active || strstr(compound_prefix, filter->expression) != NULL) {
+        TrResult result;
 
-    if (setup) setup();
+        tr_current = runner;
+        runner->current_test = test->name;
 
-    printf("Ejecutando... %s", name);
-    result = test(); /* en Fase 3: if (setjmp(...) == 0) result = test(); */
-    if (result == TR_OK) printf(GREEN("   OK\n"));
+        if (test->setup) test->setup();
 
-    tr_count_result(&runner->report, result);
+        printf("Ejecutando... %s%s", prefix, test->name);
+        result = test->test(); /* en Fase 3: if (setjmp(...) == 0) result =
+                                  test(); */
+        if (result == TR_OK) printf(GREEN("   OK\n"));
 
-    if (teardown) teardown(); /* debe ejecutarse pase o falle */
+        tr_count_result(&runner->report, result);
 
-    tr_current = NULL;
-    return result;
+        if (test->teardown) test->teardown(); /* debe ejecutarse pase o falle */
+
+        tr_current = NULL;
+    }
 }
 
-void run_single_test(void (*test)(void), void (*setUp)(void),
-                     void (*tearDown)(void), const char* funcname) {
-    setUp();
-    printf("Ejecutando %s...", funcname);
-    int failed_before = failed_tests;
-    int skipped_before = skipped_tests;
-    test();
-    if (failed_before == failed_tests && skipped_before == skipped_tests) {
-        printf(GREEN("  Pasa\n"));
+static void display_test(const TrTest* test, char* prefix, const TrFilter* filter) {
+    char compound_prefix[200];
+    strcpy(compound_prefix, prefix);
+    strcat(compound_prefix, test->name);
+    if (!filter->active || strstr(compound_prefix, filter->expression) != NULL) {
+        printf("%s\n", compound_prefix);
     }
-    ran_tests++;
-    tearDown();
+}
+
+static void run_suite(TrRunner* runner, const TrSuite* suite, char* prefix,
+                      const TrFilter* filter) {
+    char compound_prefix[200];
+    strcpy(compound_prefix, prefix);
+    strcat(compound_prefix, suite->prefix);
+    strcat(compound_prefix, "/");
+    unsigned iterations = suite->iterations == 0 ? 1 : suite->iterations;
+    for (unsigned i = 0; i < iterations; ++i) {
+        for (const TrTest* some_test = suite->tests;
+             some_test != NULL && some_test->test != NULL; ++some_test) {
+            tr_run_test(runner, some_test, compound_prefix, filter);
+        }
+    }
+    for (const TrSuite* const* child = suite->suites;
+         child != NULL && *child != NULL; ++child) {
+        run_suite(runner, *child, compound_prefix, filter);
+    }
+    return;
+}
+
+static void list_names(const TrSuite* suite, const char* prefix,
+                const TrFilter* filter) {
+    char compound_prefix[200];
+    strcpy(compound_prefix, prefix);
+    strcat(compound_prefix, suite->prefix);
+    strcat(compound_prefix, "/");
+    if (!filter->active || strstr(compound_prefix, filter->expression) != NULL) {
+        printf("%s\n", compound_prefix);
+    }
+    for (const TrTest* some_test = suite->tests;
+         some_test != NULL && some_test->test != NULL; ++some_test) {
+        display_test(some_test, compound_prefix, filter);
+    }
+    for (const TrSuite* const* child = suite->suites;
+         child != NULL && *child != NULL; ++child) {
+        list_names(*child, compound_prefix, filter);
+    }
+}
+
+static void print_help(void) {
+    printf("Ayuda de testaros:\n\n");
+    printf("--help            Muestra este mensaje\n");
+    printf("--list            Muestra las pruebas disponibles\n");
+    printf("--filter <filter> Ejecuta las pruebas cuyo mensaje contenga a <filter>\n");
+}
+
+int tr_run_suites(const TrSuite* suite, int argc, char** argv) {
+    TrFilter status;
+    status.active = false;
+    bool name_listing = false;
+    int arg_index = 1;
+    if (argc == 2 &&
+        (strcmp(argv[1], "--help") == 0 || strcmp(argv[1], "-h") == 0)) {
+        print_help();
+        return 0;
+    }
+    while (arg_index < argc) {
+        if (strcmp(argv[arg_index], "--list") == 0) {
+            name_listing = true;
+            arg_index++;
+        } else if (strcmp(argv[arg_index], "--filter") == 0) {
+            status.active = true;
+            arg_index++;
+            if (arg_index == argc) {
+                printf("Falta argumento de filtro\n");
+                return 1;
+            }
+            strcpy(status.expression, argv[arg_index]);
+            arg_index++;
+        } else {
+            printf("Argumento no reconocido\n");
+            return 1;
+        }
+    }
+    int result = 0;
+    if (name_listing) {
+        list_names(suite, "", &status);
+    } else {
+        TrRunner runner;
+        tr_runner_init(&runner);
+        run_suite(&runner, suite, "", &status);
+        tr_report_print(&(runner.report));
+
+        result = tr_report_status(&(runner.report));
+    }
+    return result;
 }
