@@ -1,5 +1,6 @@
 #include <stdarg.h>
 #include <stdbool.h>
+#include <stddef.h>
 #include <stdio.h>
 #include <string.h>
 
@@ -9,6 +10,7 @@
 #define YELLOW(text) "\033[1;33m" text "\033[0m"
 #define GREEN(text) "\033[1;32m" text "\033[0m"
 #define RED(text) "\033[1;31m" text "\033[0m"
+#define MAX_NAME_LENGTH 32
 
 static TR_THREAD_LOCAL TrRunner* tr_current;
 static TrReport tr_report = {0, 0, 0, 0};
@@ -72,12 +74,25 @@ typedef struct {
     bool active;
 } TrFilter;
 
+static bool is_name_valid(char* destination, const char* prefix,
+                          const char* name, size_t cap, const char* format) {
+    unsigned j = snprintf(destination, cap, format, prefix, name);
+    return (j < cap);
+}
+
 static void tr_run_test(TrRunner* runner, const TrTest* test, char* prefix,
-                 const TrFilter* filter) {
-    char compound_prefix[200];
-    strcpy(compound_prefix, prefix);
-    strcat(compound_prefix, test->name);
-    if (!filter->active || strstr(compound_prefix, filter->expression) != NULL) {
+                        const TrFilter* filter) {
+    char compound_prefix[MAX_NAME_LENGTH];
+    bool valid =
+        is_name_valid(compound_prefix, prefix, test->name, MAX_NAME_LENGTH, "%s%s");
+    if (!valid) {
+        fprintf(stderr, "Testaros. nombre muy largo: %s%s\n", prefix,
+                test->name);
+        tr_count_result(&(runner->report), TR_ERROR);
+        return;
+    }
+    if (!filter->active ||
+        strstr(compound_prefix, filter->expression) != NULL) {
         TrResult result;
 
         tr_current = runner;
@@ -98,21 +113,31 @@ static void tr_run_test(TrRunner* runner, const TrTest* test, char* prefix,
     }
 }
 
-static void display_test(const TrTest* test, char* prefix, const TrFilter* filter) {
-    char compound_prefix[200];
-    strcpy(compound_prefix, prefix);
-    strcat(compound_prefix, test->name);
-    if (!filter->active || strstr(compound_prefix, filter->expression) != NULL) {
+static void display_test(const TrTest* test, char* prefix,
+                         const TrFilter* filter) {
+    char compound_prefix[MAX_NAME_LENGTH];
+    bool valid =
+        is_name_valid(compound_prefix, prefix, test->name, MAX_NAME_LENGTH, "%s%s");
+    if (!valid) {
+        fprintf(stderr, "Testaros. nombre muy largo: %s%s\n", prefix,
+                test->name);
+        return;
+    }
+    if (!filter->active ||
+        strstr(compound_prefix, filter->expression) != NULL) {
         printf("%s\n", compound_prefix);
     }
 }
 
 static void run_suite(TrRunner* runner, const TrSuite* suite, char* prefix,
                       const TrFilter* filter) {
-    char compound_prefix[200];
-    strcpy(compound_prefix, prefix);
-    strcat(compound_prefix, suite->prefix);
-    strcat(compound_prefix, "/");
+    char compound_prefix[MAX_NAME_LENGTH];
+    bool valid =
+        is_name_valid(compound_prefix, prefix, suite->prefix, MAX_NAME_LENGTH, "%s%s/");
+    if (!valid) {
+        fprintf(stderr, "Testaros. nombre muy largo: %s%s/\n", prefix, suite->prefix);
+        return;
+    }
     unsigned iterations = suite->iterations == 0 ? 1 : suite->iterations;
     for (unsigned i = 0; i < iterations; ++i) {
         for (const TrTest* some_test = suite->tests;
@@ -128,12 +153,20 @@ static void run_suite(TrRunner* runner, const TrSuite* suite, char* prefix,
 }
 
 static void list_names(const TrSuite* suite, const char* prefix,
-                const TrFilter* filter) {
-    char compound_prefix[200];
-    strcpy(compound_prefix, prefix);
-    strcat(compound_prefix, suite->prefix);
-    strcat(compound_prefix, "/");
-    if (!filter->active || strstr(compound_prefix, filter->expression) != NULL) {
+                       const TrFilter* filter) {
+    char compound_prefix[MAX_NAME_LENGTH];
+    bool valid =
+        is_name_valid(compound_prefix, prefix, suite->prefix, MAX_NAME_LENGTH, "%s%s/");
+    if (!valid) {
+        fprintf(stderr, "Testaros. nombre muy largo: %s%s/\n", prefix, suite->prefix);
+        return;
+    }
+    // char compound_prefix[200];
+    // strcpy(compound_prefix, prefix);
+    // strcat(compound_prefix, suite->prefix);
+    // strcat(compound_prefix, "/");
+    if (!filter->active ||
+        strstr(compound_prefix, filter->expression) != NULL) {
         printf("%s\n", compound_prefix);
     }
     for (const TrTest* some_test = suite->tests;
@@ -150,7 +183,9 @@ static void print_help(void) {
     printf("Ayuda de testaros:\n\n");
     printf("--help            Muestra este mensaje\n");
     printf("--list            Muestra las pruebas disponibles\n");
-    printf("--filter <filter> Ejecuta las pruebas cuyo mensaje contenga a <filter>\n");
+    printf(
+        "--filter <filter> Ejecuta las pruebas cuyo mensaje contenga a "
+        "<filter>\n");
 }
 
 int tr_run_suites(const TrSuite* suite, int argc, char** argv) {
