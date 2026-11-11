@@ -10,7 +10,7 @@
 #define YELLOW(text) "\033[1;33m" text "\033[0m"
 #define GREEN(text) "\033[1;32m" text "\033[0m"
 #define RED(text) "\033[1;31m" text "\033[0m"
-#define MAX_NAME_LENGTH 32
+#define MAX_NAME_LENGTH 256
 
 static TR_THREAD_LOCAL TrRunner* tr_current;
 static TrReport tr_report = {0, 0, 0, 0};

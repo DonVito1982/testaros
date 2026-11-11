@@ -75,7 +75,7 @@ void tr_skip_at(const char* file, int line, const char* reason);
         int exp = (tr_expected);                                              \
         int act = (tr_actual);                                                \
         if (exp != act) {                                                     \
-            tr_fail_at(__FILE__, __LINE__, "Se esperaba %d y se obtuvo %d\n", \
+            tr_fail_at(__FILE__, __LINE__, "Se esperaba %d y se obtuvo %d", \
                        exp, act);                                             \
             return TR_FAIL;                                                   \
         }                                                                     \
